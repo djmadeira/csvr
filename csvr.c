@@ -7,6 +7,7 @@
 #define CHUNK_SIZE 128
 #define CSV_MODE_SET 0
 #define CSV_MODE_GET 1
+#define MAX_HEADERS 50
 
 #define DEBUG 0
 
@@ -21,8 +22,36 @@ struct parse_info {
 	int tar_col;
 	int mode;
 	char *tar_col_name;
-	char *headers[50];
+	char *headers[MAX_HEADERS];
 };
+
+void Construct_parse_info(struct parse_info *i) {
+	i->tar_col_name = NULL;
+	i->found_value = NULL;
+	i->rows = i->curr_row = i->cols = i->curr_col = 0;
+	i->found_record = 1;
+}
+
+void Destruct_parse_info(struct parse_info *i) {
+	int j;
+
+	if (i->found_value) {
+		free(i->found_value);
+	}
+
+	if (i->tar_col_name) {
+		free(i->tar_col_name);
+	}
+
+	for (j = 0; j < MAX_HEADERS; j++) {
+		if (! i->headers[j]) {
+			break;
+		}
+		free(i->headers[j]);
+	}
+
+	free(i);
+}
 
 int setup_text_col_selector(int col, char *input, struct parse_info *info) {
 	// PROBLEM HERE! What if the column name is 0? Or any other number?
@@ -41,10 +70,12 @@ int setup_text_col_selector(int col, char *input, struct parse_info *info) {
 // Bug in libcsv: final record does not trigger callback unless there is a return at the end of the file.
 void parse_field_cb(void *record, size_t size, void *i) {
 	struct parse_info *info = (struct parse_info*)i;
+	int record_len = strlen(record);
 
 	if (info->curr_row == 0) {
-		info->headers[info->curr_col] = malloc(sizeof(char) * strlen(record));
-		strcpy(info->headers[info->curr_col], record);
+		info->headers[info->curr_col] = malloc(sizeof(char) * record_len + 1);
+		strncpy(info->headers[info->curr_col], record, record_len);
+		info->headers[info->curr_col][record_len] = '\0';
 		
 		info->cols++;
 	}
@@ -52,9 +83,10 @@ void parse_field_cb(void *record, size_t size, void *i) {
 	if ( (info->curr_row == info->tar_row) && ((info->curr_col == info->tar_col) || (info->tar_col == -1 && strcmp(info->headers[info->curr_col], info->tar_col_name) == 0)) ) {
 		info->found_record = 0;
 
-		info->found_value = malloc(sizeof(char) * strlen(record));
+		info->found_value = malloc(sizeof(char) * record_len + 1);
 
-		strcpy(info->found_value, record);
+		strncpy(info->found_value, record, record_len);
+		info->found_value[record_len] = '\0';
 	}
 
 	info->curr_col++;
@@ -78,6 +110,8 @@ int get_field_value(FILE *file, struct csv_parser *p, struct parse_info *i)
 		processed = csv_parse(p, chunk, sizeof(char) * read, &parse_field_cb, &parse_record_cb, i);
 	}
 
+	csv_fini(p, &parse_field_cb, &parse_record_cb, i);
+	csv_free(p);
 	free(chunk);
 	return 0;
 }
@@ -92,16 +126,13 @@ int set_field_value(FILE *file, struct csv_parser *p, struct parse_info *i)
 int main(int argc, char *argv[]) {
 	int rc = 0, optch;
 	char *set_value = NULL;
-	char *get_value = NULL;
 	FILE *input;
 	const char *valid_opts = "r:c:s:";
 	const char *usage =
 		"Usage: csvr -r <row number> -c <col number> | <col name> [-s <new value>] [<file>]";
 	struct csv_parser *p = malloc(sizeof(struct csv_parser));
 	struct parse_info *i = malloc(sizeof(struct parse_info));
-
-	i->rows = i->curr_row = i->cols = i->curr_col = 0;
-	i->found_record = 1;
+	Construct_parse_info(i);
 
 	while((optch = getopt(argc, argv, valid_opts)) != -1) {
 		switch(optch) {
@@ -187,10 +218,6 @@ error:
 	if (set_value) {
 		free(set_value);
 	}
-	if (get_value) {
-		free(get_value);
-	}
-	free(p);
-	free(i);
+	Destruct_parse_info(i);
 	return rc;
 }
