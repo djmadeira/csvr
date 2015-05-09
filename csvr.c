@@ -13,7 +13,7 @@
 
 /**
  * Usage:
- * csvr -r <row> -c <column> file.csv
+ * csvr [-s <set value>] <row> <col name/offset> [file.csv]
  *
  */
 
@@ -27,6 +27,7 @@ struct parse_info {
   int tar_row;
   int tar_col;
   int mode;
+  FILE *output_file;
   char *tar_col_name;
   char *headers[MAX_HEADERS];
 };
@@ -40,7 +41,7 @@ void Construct_parse_info(struct parse_info *i) {
   i->found_value = NULL;
   i->tar_col = i->tar_row = -1;
   i->curr_row = i->cols = i->curr_col = 0;
-  i->found_record = 1;
+  i->found_record = 0;
 }
 
 /**
@@ -104,17 +105,28 @@ void parse_field_cb(void *record, size_t size, void *i) {
     info->cols++;
   }
 
-  // If this is the row sought after, save it
-  // TODO: stop the iteration after this is passes
-  if ( (info->curr_row == info->tar_row) &&
-      ((info->curr_col == info->tar_col) || (info->tar_col == -2 &&
-        strcmp(info->headers[info->curr_col], info->tar_col_name) == 0)) ) {
-    info->found_record = 0;
+  if (info->mode == CSV_MODE_SET) {
+    if ( (info->curr_row == info->tar_row) &&
+        ((info->curr_col == info->tar_col) || (info->tar_col == -2 &&
+          strcmp(info->headers[info->curr_col], info->tar_col_name) == 0)) ) {
+      info->found_record = 1;
+      csv_fwrite(info->output_file, info->found_value, strlen(info->found_value));
 
-    info->found_value = malloc(sizeof(char) * record_len + 1);
+    } else {
+      csv_fwrite(info->output_file, record, size);
+    }
+    putc(',', info->output_file);
 
-    strncpy(info->found_value, record, record_len);
-    info->found_value[record_len] = '\0';
+  } else {
+    if ( (info->curr_row == info->tar_row) &&
+        ((info->curr_col == info->tar_col) || (info->tar_col == -2 &&
+          strcmp(info->headers[info->curr_col], info->tar_col_name) == 0)) ) {
+      info->found_record = 1;
+      info->found_value = malloc(sizeof(char) * record_len + 1);
+
+      strncpy(info->found_value, record, record_len);
+      info->found_value[record_len] = '\0';
+    }
   }
 
   info->curr_col++;
@@ -126,6 +138,12 @@ void parse_field_cb(void *record, size_t size, void *i) {
  */
 void parse_record_cb(int term_char, void *i) {
   struct parse_info *info = (struct parse_info*)i;
+
+  if (info->mode == CSV_MODE_SET) {
+    // Fix writing an extra , at the end of each line
+    fseek(info->output_file, -1, SEEK_CUR);
+    putc('\n', info->output_file);
+  }
 
   info->curr_row++;
   info->rows++;
@@ -157,7 +175,18 @@ int get_field_value(FILE *file, struct csv_parser *p, struct parse_info *i)
 // TODO: Add writing capability
 int set_field_value(FILE *file, struct csv_parser *p, struct parse_info *i)
 {
-  printf("Not implemented yet.\n");
+  char *chunk = malloc(sizeof(char) * CHUNK_SIZE);
+  size_t read;
+  size_t processed;
+
+  // Main loop
+  while((read = fread(chunk, sizeof(char), CHUNK_SIZE, file)) >= 1) {
+    processed = csv_parse(p, chunk, sizeof(char) * read, &parse_field_cb, &parse_record_cb, i);
+  }
+
+  csv_fini(p, &parse_field_cb, &parse_record_cb, i);
+  csv_free(p);
+  free(chunk);
   return 0;
 }
 
@@ -181,6 +210,7 @@ int main(int argc, char *argv[]) {
   while((optch = getopt(argc, argv, valid_opts)) != -1) {
     switch(optch) {
       // Row
+      // Legacy; row & col offset should be passed without the -r / -c flags
       case 'r':
         i->tar_row = atoi(optarg);
         if (i->tar_row < 0) {
@@ -200,8 +230,9 @@ int main(int argc, char *argv[]) {
         break;
       // Set to a value
       case 's':
-        set_value = malloc(sizeof(optarg));
-        strcpy(set_value, optarg);
+        i->mode = CSV_MODE_SET;
+        i->found_value = malloc(sizeof(char) * (strlen(optarg) + 1));
+        strncpy(i->found_value, optarg, strlen(optarg) + 1);
         break;
       default:
         printf("%s\n", usage);
@@ -235,6 +266,7 @@ int main(int argc, char *argv[]) {
 
 
 parsetarget:
+  // Parse row
   i->tar_row = atoi(argv[index]);
   if (i->tar_row < 0) {
     printf("%s\n", "Error: -r <row> must be a positive integer (cheeky!)");
@@ -279,15 +311,25 @@ parsefile:
 
   csv_init(p, CSV_APPEND_NULL);
 
-  if (set_value == NULL) {
-    i->mode = CSV_MODE_GET;
+  if (i->mode == CSV_MODE_GET) {
     rc = get_field_value(input, p, i);
   } else {
-    i->mode = CSV_MODE_SET;
+    i->output_file = tmpfile();
     rc = set_field_value(input, p, i);
+    fseek(i->output_file, 0, SEEK_SET);
+    fclose(input);
+    FILE *output = fopen(argv[index], "w");
+    if (!output) {
+      output = stdout;
+    }
+    char *chunk = malloc(sizeof(char) * 100);
+    int read = 0;
+    while((read = fread(chunk, sizeof(char), 100, i->output_file)) > 0) {
+      fwrite(chunk, sizeof(char), read, output);
+    }
   }
 
-  if (i->found_record == 0) {
+  if (i->found_record == 1) {
     if (i->mode == CSV_MODE_GET) {
       printf("%s\n", i->found_value);
     }
