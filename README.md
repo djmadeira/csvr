@@ -18,8 +18,6 @@ This is a command line utility that uses [libcsv](http://sourceforge.net/project
 
 If the specified value exists, it will be read to the standard output.
 
-At some point, I will add the ability to set a field's value.
-
 ## Changelog
 ### 0.1
 * Added ability to read a specified field
