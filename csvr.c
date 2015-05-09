@@ -11,213 +11,305 @@
 
 #define DEBUG 0
 
+/**
+ * Usage:
+ * csvr -r <row> -c <column> file.csv
+ *
+ */
+
 struct parse_info {
-	int found_record;
-	char *found_value;
-	int rows;
-	int cols;
-	int curr_row;
-	int curr_col;
-	int tar_row;
-	int tar_col;
-	int mode;
-	char *tar_col_name;
-	char *headers[MAX_HEADERS];
+  int found_record;
+  char *found_value;
+  int rows;
+  int cols;
+  int curr_row;
+  int curr_col;
+  int tar_row;
+  int tar_col;
+  int mode;
+  char *tar_col_name;
+  char *headers[MAX_HEADERS];
 };
 
+/**
+ * Create a new parse_info struct, and set it's default values
+ * This struct is what is used to store the results returned from the parser.
+ */
 void Construct_parse_info(struct parse_info *i) {
-	i->tar_col_name = NULL;
-	i->found_value = NULL;
-	i->rows = i->curr_row = i->cols = i->curr_col = 0;
-	i->found_record = 1;
+  i->tar_col_name = NULL;
+  i->found_value = NULL;
+  i->tar_col = i->tar_row = -1;
+  i->curr_row = i->cols = i->curr_col = 0;
+  i->found_record = 1;
 }
 
+/**
+ * Destroy the parse_info struct
+ */
 void Destruct_parse_info(struct parse_info *i) {
-	int j;
+  int j;
 
-	if (i->found_value) {
-		free(i->found_value);
-	}
+  if (i->found_value) {
+    free(i->found_value);
+  }
 
-	if (i->tar_col_name) {
-		free(i->tar_col_name);
-	}
+  if (i->tar_col_name) {
+    free(i->tar_col_name);
+  }
 
-	for (j = 0; j < MAX_HEADERS; j++) {
-		if (! i->headers[j]) {
-			break;
-		}
-		free(i->headers[j]);
-	}
+  for (j = 0; j < MAX_HEADERS; j++) {
+    if (! i->headers[j]) {
+      break;
+    }
+    free(i->headers[j]);
+  }
 
-	free(i);
+  free(i);
 }
 
+/**
+ * Figure out if the column given is a string or a number,
+ * and save the value to the parse_info struct
+ */
 int setup_text_col_selector(int col, char *input, struct parse_info *info) {
-	// PROBLEM HERE! What if the column name is 0? Or any other number?
-	int input_len = strlen(input);
-	
-	if (input_len == 1 && input[0] == '0') {
-		return 0;
-	}
+  // PROBLEM HERE! What if the column **name** in the file is 0? Or any other number?
+  int input_len = strlen(input);
 
-	// User supplied a text string instead
-	info->tar_col_name = malloc(sizeof(char) * input_len);
-	strncpy(info->tar_col_name, input, input_len + 1);
-	return -1;
+  if (input_len == 1 && input[0] == '0') {
+    return 0;
+  }
+
+  // User supplied a text string instead
+  info->tar_col_name = malloc(sizeof(char) * input_len);
+  strncpy(info->tar_col_name, input, input_len + 1);
+  return -2;
 }
 
-// Bug in libcsv: final record does not trigger callback unless there is a return at the end of the file.
+/**
+ * The callback passed to libcsv for each field (column)
+ *
+ * Bug in libcsv: final record does not trigger callback unless there is a return at the end of the file.
+ */
 void parse_field_cb(void *record, size_t size, void *i) {
-	struct parse_info *info = (struct parse_info*)i;
-	int record_len = strlen(record);
+  struct parse_info *info = (struct parse_info*)i;
+  int record_len = strlen(record);
 
-	if (info->curr_row == 0) {
-		info->headers[info->curr_col] = malloc(sizeof(char) * record_len + 1);
-		strncpy(info->headers[info->curr_col], record, record_len);
-		info->headers[info->curr_col][record_len] = '\0';
-		
-		info->cols++;
-	}
+  // Set up the file headers
+  // File headers can still be queried for
+  if (info->curr_row == 0) {
+    info->headers[info->curr_col] = malloc(sizeof(char) * record_len + 1);
+    strncpy(info->headers[info->curr_col], record, record_len);
+    info->headers[info->curr_col][record_len] = '\0';
 
-	if ( (info->curr_row == info->tar_row) && ((info->curr_col == info->tar_col) || (info->tar_col == -1 && strcmp(info->headers[info->curr_col], info->tar_col_name) == 0)) ) {
-		info->found_record = 0;
+    info->cols++;
+  }
 
-		info->found_value = malloc(sizeof(char) * record_len + 1);
+  // If this is the row sought after, save it
+  // TODO: stop the iteration after this is passes
+  if ( (info->curr_row == info->tar_row) &&
+      ((info->curr_col == info->tar_col) || (info->tar_col == -2 &&
+        strcmp(info->headers[info->curr_col], info->tar_col_name) == 0)) ) {
+    info->found_record = 0;
 
-		strncpy(info->found_value, record, record_len);
-		info->found_value[record_len] = '\0';
-	}
+    info->found_value = malloc(sizeof(char) * record_len + 1);
 
-	info->curr_col++;
+    strncpy(info->found_value, record, record_len);
+    info->found_value[record_len] = '\0';
+  }
+
+  info->curr_col++;
 }
 
+/**
+ * The callback that is passed to libcsv at the end of a record (row)
+ * Simply increments the counters and resets the col index
+ */
 void parse_record_cb(int term_char, void *i) {
-	struct parse_info *info = (struct parse_info*)i;
+  struct parse_info *info = (struct parse_info*)i;
 
-	info->curr_row++;
-	info->rows++;
-	info->curr_col = 0;
+  info->curr_row++;
+  info->rows++;
+  info->curr_col = 0;
 }
 
+/**
+ * Gets a single field value from the target CSV file
+ * Kicks off libcsv to do so
+ * TODO: add error message for a not found header name
+ */
 int get_field_value(FILE *file, struct csv_parser *p, struct parse_info *i)
 {
-	char *chunk = malloc(sizeof(char) * CHUNK_SIZE);
-	size_t read;
-	size_t processed;
+  char *chunk = malloc(sizeof(char) * CHUNK_SIZE);
+  size_t read;
+  size_t processed;
 
-	while((read = fread(chunk, sizeof(char), CHUNK_SIZE, file)) >= 1) {
-		processed = csv_parse(p, chunk, sizeof(char) * read, &parse_field_cb, &parse_record_cb, i);
-	}
+  // Main loop
+  while((read = fread(chunk, sizeof(char), CHUNK_SIZE, file)) >= 1) {
+    processed = csv_parse(p, chunk, sizeof(char) * read, &parse_field_cb, &parse_record_cb, i);
+  }
 
-	csv_fini(p, &parse_field_cb, &parse_record_cb, i);
-	csv_free(p);
-	free(chunk);
-	return 0;
+  csv_fini(p, &parse_field_cb, &parse_record_cb, i);
+  csv_free(p);
+  free(chunk);
+  return 0;
 }
 
 // TODO: Add writing capability
 int set_field_value(FILE *file, struct csv_parser *p, struct parse_info *i)
 {
-	printf("Not implemented yet.\n");
-	return 0;
+  printf("Not implemented yet.\n");
+  return 0;
 }
 
+/**
+ * Main function
+ * Processes options and then kicks off the file search if the file is a valid
+ * file pointer.
+ */
 int main(int argc, char *argv[]) {
-	int rc = 0, optch;
-	char *set_value = NULL;
-	FILE *input;
-	const char *valid_opts = "r:c:s:";
-	const char *usage =
-		"Usage: csvr -r <row number> -c <col number> | <col name> [-s <new value>] [<file>]";
-	struct csv_parser *p = malloc(sizeof(struct csv_parser));
-	struct parse_info *i = malloc(sizeof(struct parse_info));
-	Construct_parse_info(i);
+  int rc = 0, optch;
+  char *set_value = NULL;
+  FILE *input;
+  const char *valid_opts = "r:c:s:";
+  const char *usage =
+    "Usage: csvr [-s <new value>] <row> <col index/name> [<file>]";
+  struct csv_parser *p = malloc(sizeof(struct csv_parser));
+  struct parse_info *i = malloc(sizeof(struct parse_info));
+  Construct_parse_info(i);
 
-	while((optch = getopt(argc, argv, valid_opts)) != -1) {
-		switch(optch) {
-			case 'r':
-				i->tar_row = atoi(optarg);
-				if (i->tar_row < 0) {
-					printf("%s\n", "Error: -r <row> must be a positive integer (cheeky!)");
-					rc = 1; // Invalid input
-					goto error;
-				}
-				break;
-			case 'c':
-				i->tar_col = atoi(optarg);
-				// Icky code to get around atoi limitation of returning 0 on a failed parse, which is a perfectly reasonable input
-				if (i->tar_col == 0) {
-					i->tar_col = setup_text_col_selector(i->tar_col, optarg, i);
-				}
-				break;
-			case 's':
-				set_value = malloc(sizeof(optarg));
-				strcpy(set_value, optarg);
-				break;
-			default:
-				printf("%s\n", usage);
-				rc = 1;
-				goto error;
-		}
-	}
+  // Iterate over all the -x options
+  while((optch = getopt(argc, argv, valid_opts)) != -1) {
+    switch(optch) {
+      // Row
+      case 'r':
+        i->tar_row = atoi(optarg);
+        if (i->tar_row < 0) {
+          printf("%s\n", "Error: -r <row> must be a positive integer (cheeky!)");
+          rc = 1; // Invalid input
+          goto error;
+        }
+        break;
+      // Column
+      case 'c':
+        i->tar_col = atoi(optarg);
+        // Icky code to get around atoi limitation of returning 0 on a failed parse,
+        // which is a perfectly reasonable input
+        if (i->tar_col == 0) {
+          i->tar_col = setup_text_col_selector(i->tar_col, optarg, i);
+        }
+        break;
+      // Set to a value
+      case 's':
+        set_value = malloc(sizeof(optarg));
+        strcpy(set_value, optarg);
+        break;
+      default:
+        printf("%s\n", usage);
+        rc = 1;
+        goto error;
+    }
+  }
+  // Skip forward
+  argc -= optind;
+  argv += optind;
 
-	if (optind < 3) {
-		printf("%s\n", usage);
-		rc = 1;
-		goto error;
-	}
+  int index = 0;
 
-	if (i->tar_row < 0 && i->tar_col_name == NULL) {
-		printf("%s\n", "Error: -c <column> must be a positive integer or a string denoting the column name");
-		rc = 1;
-		goto error;
-	}
+  // Too many options
+  if (argc > 3) {
+    printf("%s\n", usage);
+    rc = 1;
+    goto error;
+  } 
 
-	if (optind < argc || argv[optind] != NULL) {
-		input = fopen(argv[optind], (set_value == NULL ? "r" : "r+"));
-		if (input == NULL) {
-			printf("Error: file not found\n");
-			rc = 2; // Missing file
-			goto error;
-		}
-	} else {
-		input = stdin;
-	}
+  switch(argc) {
+    // Just the file or nothing
+    case 1:
+      goto parsefile;
+      break;
+    // The col and row, or both + file
+    case 2:
+    case 3:
+      goto parsetarget;
+  }
 
-	csv_init(p, CSV_APPEND_NULL);
 
-	if (set_value == NULL) {
-		i->mode = CSV_MODE_GET;
-		rc = get_field_value(input, p, i);
-	} else {
-		i->mode = CSV_MODE_SET;
-		rc = set_field_value(input, p, i);
-	}
+parsetarget:
+  i->tar_row = atoi(argv[index]);
+  if (i->tar_row < 0) {
+    printf("%s\n", "Error: -r <row> must be a positive integer (cheeky!)");
+    rc = 1; // Invalid input
+    goto error;
+  }
+  index++;
 
-	if (i->found_record == 0) {
-		if (i->mode == CSV_MODE_GET) {
-			printf("%s\n", i->found_value);
-		}
-	} else {
-		rc = 3; // Missing record
-		if (i->tar_row >= i->rows) {
-			printf("Row offset does not exist.\n");
-		}
-		
-		if (i->tar_col >= i->cols) {
-			printf("Column offset does not exist.\n");
-		}
+  i->tar_col = atoi(argv[index]);
+  // Icky code to get around atoi limitation of returning 0 on a failed parse,
+  // which is a perfectly reasonable input
+  if (i->tar_col == 0) {
+    i->tar_col = setup_text_col_selector(i->tar_col, argv[index], i);
+  }
+  index++;
 
-		if (i->tar_col == -1 && i->tar_row) {
-			//printf("Column name \"%s\" does not exist.\n", i->tar_col_name);
-		}
-	}
+parsefile:
+  if (index < argc) {
+    input = fopen(argv[index], (set_value == NULL ? "r" : "r+"));
+    if (input == NULL) {
+      printf("Error: file not found\n");
+      rc = 2; // Missing file
+      goto error;
+    }
+  } else {
+    input = stdin;
+  }
+
+  if (i->tar_col < 0 && i->tar_col_name == NULL) {
+    printf("Error: -c <column> must be a positive integer or a string denoting the column names\n");
+    rc = 1;
+    goto error;
+  }
+
+  // If the target never got set because the option wasn't passed
+  if (i->tar_row == -1 || i->tar_col == -1) {
+    printf("Error: row or column not set\n");
+    printf("%s\n", usage);
+    rc = 1;
+    goto error;
+  }
+
+  csv_init(p, CSV_APPEND_NULL);
+
+  if (set_value == NULL) {
+    i->mode = CSV_MODE_GET;
+    rc = get_field_value(input, p, i);
+  } else {
+    i->mode = CSV_MODE_SET;
+    rc = set_field_value(input, p, i);
+  }
+
+  if (i->found_record == 0) {
+    if (i->mode == CSV_MODE_GET) {
+      printf("%s\n", i->found_value);
+    }
+  } else {
+    rc = 3; // Missing record
+    if (i->tar_row >= i->rows) {
+      printf("Row offset does not exist.\n");
+    }
+
+    if (i->tar_col >= i->cols) {
+      printf("Column offset does not exist.\n");
+    }
+
+    if (i->tar_col == -1 && i->tar_row) {
+      //printf("Column name \"%s\" does not exist.\n", i->tar_col_name);
+    }
+  }
 
 error:
-	if (set_value) {
-		free(set_value);
-	}
-	Destruct_parse_info(i);
-	return rc;
+  if (set_value) {
+    free(set_value);
+  }
+  Destruct_parse_info(i);
+  return rc;
 }

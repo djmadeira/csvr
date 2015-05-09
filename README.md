@@ -9,11 +9,11 @@ This is a command line utility that uses [libcsv](http://sourceforge.net/project
 
 ## Usage
 
-    csvr -r <row> -c <column> | <column name> [<file>] 
+    csvr <row> <column offset/name> [<file>] 
 
-* -r: The row offset (starting with 0) to seek
-* -c: The column offset, or name of the column, to seek. If a string is given, the fist row of the CSV will be treated as the header row. 
-* &lt;file&gt;: If no filename is supplied, parsing will be attempted on the standard input.
+* row: The row offset (starting with 0) to seek
+* column offset/name: The column offset, or name of the column, to seek. If a string is given, the fist row of the CSV will be treated as the header row. 
+* file: If no filename is supplied, parsing will be attempted on the standard input.
 
 If the specified value exists, it will be read to the standard output.
 
