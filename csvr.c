@@ -206,6 +206,7 @@ int main(int argc, char *argv[]) {
   struct parse_info *i = malloc(sizeof(struct parse_info));
   Construct_parse_info(i);
 
+
   // Iterate over all the -x options
   while((optch = getopt(argc, argv, valid_opts)) != -1) {
     switch(optch) {
@@ -244,6 +245,10 @@ int main(int argc, char *argv[]) {
   argc -= optind;
   argv += optind;
 
+  if (!i->mode) {
+    i->mode = CSV_MODE_GET;
+  }
+
   int index = 0;
 
   // Too many options
@@ -263,7 +268,6 @@ int main(int argc, char *argv[]) {
     case 3:
       goto parsetarget;
   }
-
 
 parsetarget:
   // Parse row
@@ -285,7 +289,7 @@ parsetarget:
 
 parsefile:
   if (index < argc) {
-    input = fopen(argv[index], (set_value == NULL ? "r" : "r+"));
+    input = fopen(argv[index], "r"); 
     if (input == NULL) {
       printf("Error: file not found\n");
       rc = 2; // Missing file
@@ -310,6 +314,7 @@ parsefile:
   }
 
   csv_init(p, CSV_APPEND_NULL);
+
 
   if (i->mode == CSV_MODE_GET) {
     rc = get_field_value(input, p, i);
