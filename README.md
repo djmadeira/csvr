@@ -19,5 +19,13 @@ This is a command line utility that uses [libcsv](http://sourceforge.net/project
 If the specified value exists, it will be read to the standard output.
 
 ## Changelog
+
+### 0.2.1
+* Fixed a bug with writing to CSV
+* Fixed a segfault when no options were passed
+
+### 0.2
+* Added the ability to modify a field in the CSV with the -s option
+
 ### 0.1
 * Added ability to read a specified field

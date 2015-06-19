@@ -42,6 +42,7 @@ void Construct_parse_info(struct parse_info *i) {
   i->tar_col = i->tar_row = -1;
   i->curr_row = i->cols = i->curr_col = 0;
   i->found_record = 0;
+  i->mode = -1;
 }
 
 /**
@@ -172,7 +173,6 @@ int get_field_value(FILE *file, struct csv_parser *p, struct parse_info *i)
   return 0;
 }
 
-// TODO: Add writing capability
 int set_field_value(FILE *file, struct csv_parser *p, struct parse_info *i)
 {
   char *chunk = malloc(sizeof(char) * CHUNK_SIZE);
@@ -199,13 +199,20 @@ int main(int argc, char *argv[]) {
   int rc = 0, optch;
   char *set_value = NULL;
   FILE *input;
-  const char *valid_opts = "r:c:s:";
+  const char *valid_opts = "r:c:s:v";
   const char *usage =
     "Usage: csvr [-s <new value>] <row> <col index/name> [<file>]";
+  const char *v_info =
+    "0.2.1";
   struct csv_parser *p = malloc(sizeof(struct csv_parser));
   struct parse_info *i = malloc(sizeof(struct parse_info));
   Construct_parse_info(i);
 
+  // No options provided is invalid
+  if (argc <= 1) {
+    printf("%s\n", usage);
+    goto error;
+  }
 
   // Iterate over all the -x options
   while((optch = getopt(argc, argv, valid_opts)) != -1) {
@@ -235,6 +242,9 @@ int main(int argc, char *argv[]) {
         i->found_value = malloc(sizeof(char) * (strlen(optarg) + 1));
         strncpy(i->found_value, optarg, strlen(optarg) + 1);
         break;
+      case 'v':
+        printf("%s\n", v_info);
+        goto error;
       default:
         printf("%s\n", usage);
         rc = 1;
@@ -245,7 +255,7 @@ int main(int argc, char *argv[]) {
   argc -= optind;
   argv += optind;
 
-  if (!i->mode) {
+  if (i->mode == -1) {
     i->mode = CSV_MODE_GET;
   }
 
@@ -314,7 +324,6 @@ parsefile:
   }
 
   csv_init(p, CSV_APPEND_NULL);
-
 
   if (i->mode == CSV_MODE_GET) {
     rc = get_field_value(input, p, i);
